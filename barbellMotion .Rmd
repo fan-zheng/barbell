@@ -1,0 +1,92 @@
+---
+title: 'Barbell Motion Machine Learning '
+author: "Fan Zheng"
+date: "July 5, 2016"
+output: html_document
+---
+#### Executive Summary: This report focuses on using machine learning method to predict the motion through the monitoring data obtained from the sensor on the people and the barbell. Specifically model selection is performed and evaluated. We choose model by looking at the accuracy and oob error estimate. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Data Processing
+Load training dataset. Browse the data and find out the first seven columns are not features from the sensor data. So select from 8 to 160 columns. Also only use the column (featuers) that do not have any NAs. 
+```{r data process, echo = TRUE, cache=TRUE,eval=FALSE}
+library(caret)
+library(randomForest)
+train<-read.csv("pml-training.csv",head=TRUE,na.strings=c("NA",""))
+dim(train)
+head(train)
+train_sub<-train[,8:160]
+selcol<-apply(!is.na(train_sub),2,sum)>19621
+train_sub<-train_sub[,selcol]
+```
+
+#### Initial Fitting for feature selection
+First define fitcontrol and use 5 fold cross validation. Select 70% data from train for training the model and the remain 30% as the validation data set to calculate the accuracy and oob estimated error rate. Using random forest model we perform the fitting. Then we rank the importance of the feature.
+Due to long time taken for the fitting we do not actually run the fitting here. 
+
+```{r initial fitting,echo=TRUE, cache=TRUE,eval=FALSE}
+fitcontrol<-trainControl(method="cv",number=5) # 5 fold cross validation
+inTrainp7 = createDataPartition(y=train_sub$classe, p = 0.7,list=FALSE)
+train_subp7<-train_sub[inTrainp7,]
+train_vali<-train_sub[-inTrainp7,]
+modfitp7<-train(as.factor(classe)~.,data=train_subp7,method="rf",trControl=fitcontrol,prox=TRUE)
+varimpp7<- varImp(modfitp7, scale = FALSE)
+varimpp7$importance$names<-rownames(varimpp7$importance)
+varimpp7$importance<-varimpp7$importance[order(varimpp7$importance$Overall,decreasing = TRUE),]
+# order the importance coefficient.
+```
+
+#### Demonstrate the ranked features from high importance to low importance.
+Overall is the importance score obtained from varImp function.
+```{r Show the ranking of features, echo=TRUE,cache=TRUE}
+demorank<-read.csv("rank.csv", head=TRUE)
+demorank
+```
+
+#### Further select the model by doing correlation of the 20 most important features.
+Here to further select the features we run the correlation among the 20 most important featrures from above procedure. Then I plot the final table combining the correlation table (from high correlation to low) and the rank of the importance of the features from initial rf fitting. Again r code not actually run here.
+
+```{r further feature selection, echo = TRUE, cache=TRUE,eval=FALSE}
+rowname<-varimpp7$importance$names[1:20] # select top 20 most important features.
+train_fittest<-train_subp7[,rowname]
+rowname<-append(rowname,"classe")
+train_fit<-train_subp7[,rowname]
+corr<-cor(train_fittest) # calculate mutual correlation  among the 20 featrues.
+zdf<-as.data.frame(as.table(corr))
+zdf$Freq<-abs(zdf$Freq) # Here Freq is the correlation coefficient.
+zdf<-zdf[order(zdf$Freq,decreasing = TRUE),]
+zdfsub<-subset(zdf,Freq<1 & Freq>0.7) # only consider smaller than 1 larger than 0.7 ones
+zdfsub$Var2<-as.character(zdfsub$Var2)
+zdfsub$imp <- varimpp7$importance$Overall[match(zdfsub$Var2, varimpp7$importance$names)]
+# showing the correlation coefficient together with the feature importance coefficient.
+# use correlation coefficient 0.8 as cutline, but keep the twos that has high importance coefficient, so just get rid of accel_belt_z and magnet_belt_x, and keep both roll_belt and yaw_belt.
+```
+
+Here we load the table of varimpp7$importance to show the correlation coefficient and the rank, which help us to decide if we want to use all the top 20 features or not. From the table below, we see that for the correlation above 0.8, we can potentially remove accel_belt_z and magnet_belt_x, because they themselves have low importance coefficient while correlate strongly with some feature that have high importance coefficient.
+```{r show the table help feature selection,echo=TRUE,cache=TRUE}
+cor_rank_table<-read.csv("zdfsub.csv",head=TRUE)
+cor_rank_table
+```
+
+#### Final fitting with selected features. First try all the 20 most important features from importance coefficient point of view. And use the 30% train validation data set to test and generate prediction and confusionMatrix to obtain accuracy and oob estimate of error rate.
+
+```{r final fitting,echo = TRUE, cache=TRUE, eval=FALSE}
+rownametrain_fit<-names(train_fit)
+rownametrain_fit_less<-names(train_fit_less)
+train_valifinal<-train_vali[,rownametrain_fit]
+train_vali_lessfinal<-train_vali[,rownametrain_fit_less]
+modfitfinal<-train(as.factor(classe)~.,data=train_fit,method="rf",trControl=fitcontrol,prox=TRUE)
+predictfinal<-predict(modfitfinal,train_valifinal)
+confusionMatrix(train_valifinal$classe,predictfinal)
+```
+Accuracy: 0.9917, OOB estimate of  error rate: 0.88%
+
+#### Run alternate model with two less features.
+I then run the model with 18 features, removing the accel_belt_z and magnet_belt_x. It is the same procedure so the code is not shown here.
+Accuracy: 0.992, OOB estimate of  error rate: 0.93%
+
+#### Final model selection
+Comparing the two models (20 features vs 18 features), the accuracy is comparable but the 20 features one have lower oob error rate. Since we are focusing on prediction instead of interpretting, we will use the 20 features model one. We use that model to fit the quiz with 20 test data set and obtain 100% correct prediction.
